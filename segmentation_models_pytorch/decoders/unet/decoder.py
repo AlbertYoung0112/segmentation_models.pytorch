@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from segmentation_models_pytorch.base import modules as md
+from segmentation_models_pytorch.base import modules as md
 
 
 class DecoderBlock(nn.Module):
@@ -71,6 +72,7 @@ class UnetDecoder(nn.Module):
         use_batchnorm=True,
         attention_type=None,
         center=False,
+        log_grad=False
     ):
         super().__init__()
 
@@ -104,8 +106,21 @@ class UnetDecoder(nn.Module):
             for in_ch, skip_ch, out_ch in zip(in_channels, skip_channels, out_channels)
         ]
         self.blocks = nn.ModuleList(blocks)
+        self.log_grad = log_grad
+        self.grad = {}
+
+    def grad_logger(self, name):
+        def hook(grad):
+            if self.log_grad:
+                self.grad[name] = grad
+        return hook
 
     def forward(self, *features):
+
+        if self.training:
+            for idx, f in enumerate(features):
+                if f.requires_grad:
+                    f.register_hook(self.grad_logger(f"enc{idx}"))
 
         features = features[1:]  # remove first skip with same spatial resolution
         features = features[::-1]  # reverse channels to start from head of encoder
@@ -117,5 +132,7 @@ class UnetDecoder(nn.Module):
         for i, decoder_block in enumerate(self.blocks):
             skip = skips[i] if i < len(skips) else None
             x = decoder_block(x, skip)
+            if self.training and x.requires_grad:
+                x.register_hook(self.grad_logger(f"dec{i}"))
 
         return x
