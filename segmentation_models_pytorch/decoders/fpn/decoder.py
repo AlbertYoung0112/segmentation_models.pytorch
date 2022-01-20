@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from segmentation_models_pytorch.utils.functional import grad_logger
 
 
 class Conv3x3GNReLU(nn.Module):
@@ -10,6 +11,7 @@ class Conv3x3GNReLU(nn.Module):
         self.block = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, (3, 3), stride=1, padding=1, bias=False),
             nn.GroupNorm(32, out_channels),
+            # nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
         )
 
@@ -43,9 +45,16 @@ class SegmentationBlock(nn.Module):
                 blocks.append(Conv3x3GNReLU(out_channels, out_channels, upsample=True))
 
         self.block = nn.Sequential(*blocks)
+        self.grad = {}
 
     def forward(self, x):
-        return self.block(x)
+        if self.training and x.requires_grad:
+            x.register_hook(grad_logger(self.grad, f"in"))
+        for idx, layer in enumerate(self.block):
+            x = layer(x)
+            if self.training and x.requires_grad:
+                x.register_hook(grad_logger(self.grad, f"{idx}"))
+        return x
 
 
 class MergeBlock(nn.Module):
@@ -73,6 +82,7 @@ class FPNDecoder(nn.Module):
         segmentation_channels=128,
         dropout=0.2,
         merge_policy="add",
+        log_grad=False
     ):
         super().__init__()
 
@@ -97,9 +107,16 @@ class FPNDecoder(nn.Module):
 
         self.merge = MergeBlock(merge_policy)
         self.dropout = nn.Dropout2d(p=dropout, inplace=True)
+        self._grad = {}
+        self.log_grad = log_grad
 
     def forward(self, *features):
         c2, c3, c4, c5 = features[-4:]
+
+        if self.training and self.log_grad:
+            for idx, f in enumerate(features):
+                if f.requires_grad:
+                    f.register_hook(grad_logger(self._grad, f"enc{idx}"))
 
         p5 = self.p5(c5)
         p4 = self.p4(p5, c4)
@@ -107,7 +124,27 @@ class FPNDecoder(nn.Module):
         p2 = self.p2(p3, c2)
 
         feature_pyramid = [seg_block(p) for seg_block, p in zip(self.seg_blocks, [p5, p4, p3, p2])]
+        if self.training and self.log_grad:
+            for idx, f in enumerate(feature_pyramid):
+                if f.requires_grad:
+                    f.register_hook(grad_logger(self._grad, f"pyramid{idx}"))
         x = self.merge(feature_pyramid)
+        if self.log_grad and self.training and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "merge"))
+        for i, p in enumerate([p5, p4, p3, p2]):
+            if self.log_grad and self.training and p.requires_grad:
+                p.register_hook(grad_logger(self._grad, f"p{i}"))
         x = self.dropout(x)
+        if self.log_grad and self.training and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "dropout"))
 
         return x
+
+    @property
+    def grad(self):
+        g = {}
+        g.update(self._grad)
+        for idx, seg_block in enumerate(self.seg_blocks):
+            for k, v in seg_block.grad.items():
+                g[f"pyramid{idx}_"+k] = v
+        return g
