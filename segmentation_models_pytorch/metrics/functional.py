@@ -162,7 +162,8 @@ def _get_stats_multiclass(
 ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor, torch.LongTensor]:
 
     batch_size, *dims = output.shape
-    num_elements = torch.prod(torch.tensor(dims)).long()
+    # num_elements = torch.prod(torch.tensor(dims)).long()
+    num_elements = torch.sum((target != -1).view(batch_size, -1), dim=1, keepdim=True).long()
 
     tp_count = torch.zeros(batch_size, num_classes, dtype=torch.long)
     fp_count = torch.zeros(batch_size, num_classes, dtype=torch.long)
@@ -177,7 +178,8 @@ def _get_stats_multiclass(
         tp = torch.histc(matched.float(), bins=num_classes, min=0, max=num_classes - 1)
         fp = torch.histc(output_i.float(), bins=num_classes, min=0, max=num_classes - 1) - tp
         fn = torch.histc(target_i.float(), bins=num_classes, min=0, max=num_classes - 1) - tp
-        tn = num_elements - tp - fp - fn
+        tn = num_elements[i] - tp - fp - fn
+        assert torch.all(fp >= 0) and torch.all(fn >= 0) and torch.all(tn >= 0)
         tp_count[i] = tp.long()
         fp_count[i] = fp.long()
         fn_count[i] = fn.long()
@@ -295,8 +297,12 @@ def _iou_score(tp, fp, fn, tn):
     return tp / (tp + fp + fn)
 
 
-def _accuracy(tp, fp, fn, tn):
+def _binary_accuracy(tp, fp, fn, tn):
     return (tp + tn) / (tp + fp + fn + tn)
+
+
+def _multiclass_accuracy(tp, fp, fn, tn, n_classes):
+    return (tp) / (tp + fp + fn + tn) * n_classes
 
 
 def _sensitivity(tp, fp, fn, tn):
@@ -412,7 +418,7 @@ def iou_score(
     )
 
 
-def accuracy(
+def binary_accuracy(
     tp: torch.LongTensor,
     fp: torch.LongTensor,
     fn: torch.LongTensor,
@@ -423,7 +429,7 @@ def accuracy(
 ) -> torch.Tensor:
     """Accuracy"""
     return _compute_metric(
-        _accuracy,
+        _binary_accuracy,
         tp,
         fp,
         fn,
@@ -431,6 +437,29 @@ def accuracy(
         reduction=reduction,
         class_weights=class_weights,
         zero_division=zero_division,
+    )
+
+def multiclass_accuracy(
+        tp: torch.LongTensor,
+        fp: torch.LongTensor,
+        fn: torch.LongTensor,
+        tn: torch.LongTensor,
+        reduction: Optional[str] = None,
+        class_weights: Optional[List[float]] = None,
+        zero_division: Union[str, float] = 1.0,
+        n_classes: int = 40,
+) -> torch.Tensor:
+    """Accuracy"""
+    return _compute_metric(
+        _multiclass_accuracy,
+        tp,
+        fp,
+        fn,
+        tn,
+        reduction=reduction,
+        class_weights=class_weights,
+        zero_division=zero_division,
+        n_classes=n_classes
     )
 
 
@@ -739,7 +768,8 @@ _doc = """
 fbeta_score.__doc__ += _doc
 f1_score.__doc__ += _doc
 iou_score.__doc__ += _doc
-accuracy.__doc__ += _doc
+binary_accuracy.__doc__ += _doc
+multiclass_accuracy.__doc__ += _doc
 sensitivity.__doc__ += _doc
 specificity.__doc__ += _doc
 balanced_accuracy.__doc__ += _doc
