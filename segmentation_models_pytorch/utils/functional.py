@@ -123,3 +123,9 @@ def recall(pr, gt, eps=1e-7, threshold=None, ignore_channels=None):
     score = (tp + eps) / (tp + fn + eps)
 
     return score
+
+
+def grad_logger(dst, name):
+    def hook(grad):
+        dst[name] = grad
+    return hook

@@ -63,6 +63,7 @@ class FPN(SegmentationModel):
         activation: Optional[str] = None,
         upsampling: int = 4,
         aux_params: Optional[dict] = None,
+        log_grad: bool = False
     ):
         super().__init__()
 
@@ -80,6 +81,7 @@ class FPN(SegmentationModel):
             segmentation_channels=decoder_segmentation_channels,
             dropout=decoder_dropout,
             merge_policy=decoder_merge_policy,
+            log_grad=log_grad
         )
 
         self.segmentation_head = SegmentationHead(
@@ -97,3 +99,7 @@ class FPN(SegmentationModel):
 
         self.name = "fpn-{}".format(encoder_name)
         self.initialize()
+
+    @property
+    def grad(self):
+        return self.decoder.grad

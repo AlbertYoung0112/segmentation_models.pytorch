@@ -129,6 +129,10 @@ class UnetDecoder(nn.Module):
         skips = features[1:]
 
         x = self.center(head)
+        if self.training:
+            if x.requires_grad:
+                x.register_hook(self.grad_logger(f"center"))
+
         for i, decoder_block in enumerate(self.blocks):
             skip = skips[i] if i < len(skips) else None
             x = decoder_block(x, skip)
