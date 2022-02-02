@@ -1,3 +1,4 @@
+import pdb
 from typing import Optional, List
 
 import torch
@@ -54,7 +55,7 @@ class DiceLoss(_Loss):
         self.log_loss = log_loss
         self.ignore_index = ignore_index
 
-    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor, weight=None) -> torch.Tensor:
 
         assert y_true.size(0) == y_pred.size(0)
 
@@ -121,7 +122,13 @@ class DiceLoss(_Loss):
         if self.classes is not None:
             loss = loss[self.classes]
 
-        return self.aggregate_loss(loss)
+        if weight is not None:
+            weight = weight / weight.sum()
+            ret = (loss * weight).sum()
+        else:
+            ret = loss.mean()
+
+        return ret
 
     def aggregate_loss(self, loss):
         return loss.mean()
