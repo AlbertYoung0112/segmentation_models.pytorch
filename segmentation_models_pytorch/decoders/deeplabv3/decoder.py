@@ -29,26 +29,53 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
+import pdb
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+from segmentation_models_pytorch.utils.functional import grad_logger
 
 __all__ = ["DeepLabV3Decoder"]
 
 
-class DeepLabV3Decoder(nn.Sequential):
-    def __init__(self, in_channels, out_channels=256, atrous_rates=(12, 24, 36)):
-        super().__init__(
-            ASPP(in_channels, out_channels, atrous_rates),
+class DeepLabV3Decoder(nn.Module):
+    def __init__(self, in_channels, out_channels=256, atrous_rates=(12, 24, 36), log_grad=False):
+        super(DeepLabV3Decoder, self).__init__()
+        self.aspp = ASPP(in_channels, out_channels, atrous_rates, log_grad=log_grad)
+        self.conv = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(),
         )
+        # super().__init__(
+        #     ASPP(in_channels, out_channels, atrous_rates, log_grad=log_grad),
+        #     nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False),
+        #     nn.BatchNorm2d(out_channels),
+        #     nn.ReLU(),
+        # )
         self.out_channels = out_channels
+        self.log_grad = log_grad
+        self._grad = {}
 
     def forward(self, *features):
-        return super().forward(features[-1])
+        x = features[-1]
+        if self.training and self.log_grad and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "dec_in"))
+        x = self.aspp(x)
+        if self.training and self.log_grad and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "dec_aspp"))
+        x = self.conv(x)
+        if self.training and self.log_grad and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "dec_conv"))
+        return x
+
+    @property
+    def grad(self):
+        g = {}
+        g.update(self._grad)
+        g.update(self.aspp.grad)
+        return g
 
 
 class DeepLabV3PlusDecoder(nn.Module):
@@ -153,7 +180,7 @@ class ASPPPooling(nn.Sequential):
 
 
 class ASPP(nn.Module):
-    def __init__(self, in_channels, out_channels, atrous_rates, separable=False):
+    def __init__(self, in_channels, out_channels, atrous_rates, separable=False, log_grad=False):
         super(ASPP, self).__init__()
         modules = []
         modules.append(
@@ -180,13 +207,29 @@ class ASPP(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.5),
         )
+        self.log_grad = log_grad
+        self._grad = {}
 
     def forward(self, x):
         res = []
-        for conv in self.convs:
-            res.append(conv(x))
+        if self.training and self.log_grad and x.requires_grad:
+            x.register_hook(grad_logger(self._grad, "aspp_in"))
+        for idx, conv in enumerate(self.convs):
+            y = conv(x)
+            if self.training and self.log_grad and y.requires_grad:
+                y.register_hook(grad_logger(self._grad, f"aspp{idx}"))
+            res.append(y)
         res = torch.cat(res, dim=1)
-        return self.project(res)
+        if self.training and self.log_grad and res.requires_grad:
+            x.register_hook(grad_logger(self._grad, f"aspp_out"))
+        proj = self.project(res)
+        if self.training and self.log_grad and res.requires_grad:
+            x.register_hook(grad_logger(self._grad, f"aspp_proj"))
+        return proj
+
+    @property
+    def grad(self):
+        return self._grad
 
 
 class SeparableConv2d(nn.Sequential):

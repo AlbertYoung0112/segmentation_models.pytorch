@@ -1,3 +1,5 @@
+import pdb
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,10 +40,10 @@ class DecoderBlock(nn.Module):
         if skip is not None:
             x = torch.cat([x, skip], dim=1)
             x = self.attention1(x)
-        x = self.conv1(x)
-        x = self.conv2(x)
+        x1 = self.conv1(x)
+        x = self.conv2(x1)
         x = self.attention2(x)
-        return x
+        return x, x1
 
 
 class CenterBlock(nn.Sequential):
@@ -135,8 +137,10 @@ class UnetDecoder(nn.Module):
 
         for i, decoder_block in enumerate(self.blocks):
             skip = skips[i] if i < len(skips) else None
-            x = decoder_block(x, skip)
+            x, x1 = decoder_block(x, skip)
             if self.training and x.requires_grad:
-                x.register_hook(self.grad_logger(f"dec{i}"))
+                x.register_hook(self.grad_logger(f"dec{i}_conv2"))
+            if self.training and x1.requires_grad:
+                x1.register_hook(self.grad_logger(f"dec{i}_conv1"))
 
         return x

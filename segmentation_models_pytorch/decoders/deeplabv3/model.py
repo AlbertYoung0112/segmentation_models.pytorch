@@ -56,6 +56,7 @@ class DeepLabV3(SegmentationModel):
         activation: Optional[str] = None,
         upsampling: int = 8,
         aux_params: Optional[dict] = None,
+        log_grad: bool = False
     ):
         super().__init__()
 
@@ -70,6 +71,7 @@ class DeepLabV3(SegmentationModel):
         self.decoder = DeepLabV3Decoder(
             in_channels=self.encoder.out_channels[-1],
             out_channels=decoder_channels,
+            log_grad=log_grad
         )
 
         self.segmentation_head = SegmentationHead(
@@ -84,6 +86,10 @@ class DeepLabV3(SegmentationModel):
             self.classification_head = ClassificationHead(in_channels=self.encoder.out_channels[-1], **aux_params)
         else:
             self.classification_head = None
+
+    @property
+    def grad(self):
+        return self.decoder.grad
 
 
 class DeepLabV3Plus(SegmentationModel):
