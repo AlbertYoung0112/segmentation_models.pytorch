@@ -19,6 +19,7 @@ from .timm_regnet import timm_regnet_encoders
 from .timm_sknet import timm_sknet_encoders
 from .timm_mobilenetv3 import timm_mobilenetv3_encoders
 from .timm_gernet import timm_gernet_encoders
+from .mobilevit import mobile_vit
 
 from .timm_universal import TimmUniversalEncoder
 
@@ -42,6 +43,7 @@ encoders.update(timm_regnet_encoders)
 encoders.update(timm_sknet_encoders)
 encoders.update(timm_mobilenetv3_encoders)
 encoders.update(timm_gernet_encoders)
+encoders.update(mobile_vit)
 
 
 def get_encoder(name, in_channels=3, depth=5, weights=None, output_stride=32, **kwargs):
@@ -68,7 +70,7 @@ def get_encoder(name, in_channels=3, depth=5, weights=None, output_stride=32, **
     params.update(log_grad='log_grad' in kwargs and kwargs['log_grad'])
     encoder = Encoder(**params)
 
-    if weights is not None:
+    if weights is not None and len(weights) != 0:
         try:
             settings = encoders[name]["pretrained_settings"][weights]
         except KeyError:
