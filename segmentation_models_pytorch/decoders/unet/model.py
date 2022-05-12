@@ -74,6 +74,7 @@ class Unet(SegmentationModel):
             in_channels=in_channels,
             depth=encoder_depth,
             weights=encoder_weights,
+            log_grad=log_grad
         )
 
         self.decoder = UnetDecoder(
@@ -103,4 +104,7 @@ class Unet(SegmentationModel):
 
     @property
     def grad(self):
-        return self.decoder.grad
+        grad = {}
+        grad.update(self.decoder.grad)
+        grad.update(self.encoder.grad)
+        return grad

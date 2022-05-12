@@ -22,8 +22,10 @@ Methods:
         number of feature tensors = 6 (one with same resolution as input and 5 downsampled),
         depth = 3 -> number of feature tensors = 4 (one with same resolution as input and 3 downsampled).
 """
+import pdb
 from copy import deepcopy
 
+import torch as th
 import torch.nn as nn
 
 from torchvision.models.resnet import ResNet
@@ -34,12 +36,107 @@ from pretrainedmodels.models.torchvision_models import pretrained_settings
 from ._base import EncoderMixin
 
 
+def grad_logger(dst, name):
+    def hook(grad):
+        dst[name] = grad
+    return hook
+
+
+class BasicBlockWithGradLogger(BasicBlock):
+    def __init__(self, *args, **kwargs):
+        super(BasicBlockWithGradLogger, self).__init__(*args, **kwargs)
+        self.log_grad = 'log_grad' in kwargs and kwargs['log_grad']
+        self.grad = {}
+        # self.relu1 = nn.ReLU(inplace=False)
+        # self.relu2 = nn.ReLU(inplace=False)
+
+    def reg_grad_logger(self, name, x):
+        if self.log_grad and self.training and x.requires_grad:
+            def hook(grad):
+                self.grad[name] = grad
+            x.register_hook(hook)
+
+    def forward(self, x: th.Tensor) -> th.Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        self.reg_grad_logger('conv1', out)
+        out = self.bn1(out)
+        self.reg_grad_logger('bn1', out)
+        out = self.relu(out)
+        self.reg_grad_logger('relu1', out)
+
+        out = self.conv2(out)
+        self.reg_grad_logger('conv2', out)
+        out = self.bn2(out)
+        self.reg_grad_logger('bn2', out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+            self.reg_grad_logger('identity', identity)
+
+        out += identity
+        out = self.relu(out)
+        self.reg_grad_logger('out', out)
+
+        return out
+
+
+class BottleneckWithGradLogger(Bottleneck):
+    def __init__(self, *args, **kwargs):
+        super(BottleneckWithGradLogger, self).__init__(*args, **kwargs)
+        self.log_grad = 'log_grad' in kwargs and kwargs['log_grad']
+        self.grad = {}
+
+    def reg_grad_logger(self, name, x):
+        if self.log_grad and self.training and x.requires_grad:
+            def hook(grad):
+                self.grad[name] = grad
+            x.register_hook(hook)
+
+    def forward(self, x: th.Tensor) -> th.Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        self.reg_grad_logger('conv1', out)
+        out = self.bn1(out)
+        self.reg_grad_logger('bn1', out)
+        out = self.relu(out)
+        self.reg_grad_logger('relu1', out)
+
+        out = self.conv2(out)
+        self.reg_grad_logger('conv2', out)
+        out = self.bn2(out)
+        self.reg_grad_logger('bn2', out)
+        out = self.relu(out)
+        self.reg_grad_logger('relu2', out)
+
+        out = self.conv3(out)
+        self.reg_grad_logger('conv3', out)
+        out = self.bn3(out)
+        self.reg_grad_logger('bn3', out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+            self.reg_grad_logger('identity', identity)
+
+        out += identity
+        out = self.relu(out)
+        self.reg_grad_logger('out', out)
+
+        return out
+
+
 class ResNetEncoder(ResNet, EncoderMixin):
-    def __init__(self, out_channels, depth=5, **kwargs):
+    def __init__(self, out_channels, depth=5, log_grad=False, **kwargs):
         super().__init__(**kwargs)
         self._depth = depth
         self._out_channels = out_channels
         self._in_channels = 3
+        for layer_idx in range(1, 5):
+            layer = getattr(self, f'layer{layer_idx}')
+            for blk in layer:
+                blk.log_grad = log_grad
 
         del self.fc
         del self.avgpool
@@ -68,6 +165,16 @@ class ResNetEncoder(ResNet, EncoderMixin):
         state_dict.pop("fc.bias", None)
         state_dict.pop("fc.weight", None)
         super().load_state_dict(state_dict, **kwargs)
+
+    @property
+    def grad(self):
+        grad = {}
+        for layer_idx in range(1, 5):
+            layer = getattr(self, f"layer{layer_idx}")
+            for blk_idx, blk in enumerate(layer):
+                for k, v in blk.grad.items():
+                    grad[f'enc.layer{layer_idx}.blk{blk_idx}.'+k] = v
+        return grad
 
 
 new_settings = {
@@ -129,7 +236,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnet18"],
         "params": {
             "out_channels": (3, 64, 64, 128, 256, 512),
-            "block": BasicBlock,
+            "block": BasicBlockWithGradLogger,
             "layers": [2, 2, 2, 2],
         },
     },
@@ -138,7 +245,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnet34"],
         "params": {
             "out_channels": (3, 64, 64, 128, 256, 512),
-            "block": BasicBlock,
+            "block": BasicBlockWithGradLogger,
             "layers": [3, 4, 6, 3],
         },
     },
@@ -147,7 +254,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnet50"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 6, 3],
         },
     },
@@ -156,7 +263,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnet101"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
         },
     },
@@ -165,7 +272,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnet152"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 8, 36, 3],
         },
     },
@@ -174,7 +281,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext50_32x4d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 6, 3],
             "groups": 32,
             "width_per_group": 4,
@@ -185,7 +292,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext101_32x4d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
             "groups": 32,
             "width_per_group": 4,
@@ -196,7 +303,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext101_32x8d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
             "groups": 32,
             "width_per_group": 8,
@@ -207,7 +314,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext101_32x16d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
             "groups": 32,
             "width_per_group": 16,
@@ -218,7 +325,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext101_32x32d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
             "groups": 32,
             "width_per_group": 32,
@@ -229,7 +336,7 @@ resnet_encoders = {
         "pretrained_settings": pretrained_settings["resnext101_32x48d"],
         "params": {
             "out_channels": (3, 64, 256, 512, 1024, 2048),
-            "block": Bottleneck,
+            "block": BottleneckWithGradLogger,
             "layers": [3, 4, 23, 3],
             "groups": 32,
             "width_per_group": 48,

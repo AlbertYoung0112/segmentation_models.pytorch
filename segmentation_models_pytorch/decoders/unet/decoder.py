@@ -119,10 +119,10 @@ class UnetDecoder(nn.Module):
 
     def forward(self, *features):
 
-        if self.training:
-            for idx, f in enumerate(features):
-                if f.requires_grad:
-                    f.register_hook(self.grad_logger(f"enc{idx}"))
+        # if self.training:
+        #     for idx, f in enumerate(features):
+        #         if f.requires_grad:
+        #             f.register_hook(self.grad_logger(f"enc{idx}"))
 
         features = features[1:]  # remove first skip with same spatial resolution
         features = features[::-1]  # reverse channels to start from head of encoder
